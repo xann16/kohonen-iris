@@ -1,0 +1,5 @@
+temp_*/
+build/
+Testing/
+*.sublime-workspace
+*.swp

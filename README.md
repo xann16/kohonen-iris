@@ -1,2 +1,2 @@
-# isai-kohonen-iris-clasterization
-Simple implementation of Kohonen ANN for clasterization of standard iris database.
+# isai-kohonen-iris-clusterization
+Simple implementation of Kohonen ANN for clusterization of standard iris database.
