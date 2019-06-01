@@ -22,8 +22,12 @@ set( CMAKE_EXPORT_COMPILE_COMMANDS ON )
 
 # project executable target
 add_executable( kohris
+    src/prng.h
+    src/prng.cpp
     src/dataset.h
     src/dataset.cpp
+    src/kohnet.h
+    src/kohnet.cpp
     src/test.cpp )
 
 target_include_directories( kohris
