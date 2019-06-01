@@ -12,16 +12,13 @@ namespace isai
 
   struct knc_settings_t
   {
-    std::size_t hidden_layer_size = 30u;
+    std::size_t hidden_layer_size = 10000u;
     std::size_t training_set_size = 100u;
     std::size_t expected_cluster_count = 3u;
 
-    double normalization_sphere_radius = 1.0;
-    double init_radius_threshold = 1.0;
-    double alpha = 0.2;
-    double beta = 0.2;
-    double kill_perc = 0.1;
-    std::size_t kill_min = 3u;
+    double normalization_sphere_radius = 4.0;
+    double alpha = 0.3;
+    std::size_t coalesce_interval = 10u;
 
     bool is_feature_sign_balanced = true;
   };
@@ -40,7 +37,7 @@ namespace isai
     auto begin() const { m_weights.begin(); }
     auto end() const { m_weights.end(); }
 
-    features_t const &weights() const noexcept { return m_weights; }
+    features_t const &weights() const { return m_weights; }
 
     void normalize()
     {
@@ -84,6 +81,15 @@ namespace isai
       return sqr_distance_to( prev );
     }
 
+    void average_with( kohonen_neuron_t const &other )
+    {
+      for ( auto i = std::size_t{ 0 }; i < m_weights.size(); i++ )
+      {
+        m_weights[ i ] += ( m_weights[ i ] + other.m_weights[ i ] ) / 2.0;
+      }
+      normalize();
+    }
+
   private:
     double norm()
     {
@@ -102,8 +108,10 @@ namespace isai
   {
   public:
     explicit kohonen_network_t( knc_settings_t const &settings ) :
-      m_radius_threshold( settings.init_radius_threshold ),
       m_iteration_no( 0u ),
+      m_alive_count( 0u ),
+      m_kill_count( 0u ),
+      m_coalesce_count( 0u ),
       m_settings( settings )
     {
       m_hidden_layer.reserve( m_settings.hidden_layer_size );
@@ -111,8 +119,10 @@ namespace isai
       for ( auto i = std::size_t{ 0 }; i < m_settings.hidden_layer_size; i++ )
       {
         m_hidden_layer.emplace_back( m_settings.normalization_sphere_radius );
-        m_statuses.emplace_back( 0.0 );
+        m_statuses.emplace_back( 0 );
+        m_alive_count++;
       }
+      assert( m_alive_count == m_settings.hidden_layer_size );
     }
 
     template < typename Iterator >
@@ -120,14 +130,13 @@ namespace isai
     {
       while ( !is_completed() )
       {
-        clear_statuses();
+        prepare();
         for ( auto i = begin; i != end; i++ )
         {
           process_input( ( *i ).features );
         }
-        kill_lazy();
-        adjust_radius_threshold();
-        m_iteration_no++;
+        kill();
+        coalesce();
         print_status();
       }
     }
@@ -137,7 +146,7 @@ namespace isai
       auto res = std::vector< kohonen_neuron_t >{};
       for ( auto i = std::size_t{ 0 }; i < size(); i++ )
       {
-        if ( m_statuses[ i ] >= 0.0 )
+        if ( is_alive( i ) )
         {
           res.emplace_back( m_hidden_layer[ i ] );
         }
@@ -149,142 +158,132 @@ namespace isai
     }
 
   private:
-    void clear_statuses()
+    void prepare()
     {
+      m_kill_count = 0u;
+      m_coalesce_count = 0u;
+      m_iteration_no++;
+
+      auto sum = 0;
+
       for ( auto &&s : m_statuses )
       {
-        if ( s > 0.0 )
+        if ( s > 0 )
         {
-          s = 0.0;
+          sum += s;
+          s = 0;
         }
       }
+
+      assert( sum = static_cast< int >( m_settings.training_set_size ) );
+    }
+
+    std::size_t find_winner( features_t const &input ) const
+    {
+      auto best_ix = std::size_t{ 0 };
+      auto best_val = std::numeric_limits< double >::max();
+
+      for ( auto i = std::size_t{ 0 }; i < size(); i++ )
+      {
+        auto sqr_distance = m_hidden_layer[ i ].sqr_distance_to( input );
+        if ( is_alive( i ) && sqr_distance < best_val )
+        {
+          best_ix = i;
+          best_val = sqr_distance;
+        }
+      }
+
+      return best_ix;
     }
 
     void process_input( features_t const &input )
     {
-      auto sqr_radius_threshold = m_radius_threshold * m_radius_threshold;
-      for ( auto i = std::size_t{ 0 }; i < size(); i++ )
-      {
-        if ( m_statuses[ i ] >= 0.0 && m_hidden_layer[ i ].sqr_distance_to(
-                                         input ) < sqr_radius_threshold )
-        {
-          auto sqr_diff_dist =
-            m_hidden_layer[ i ].adjust_to_ex( input, m_settings.alpha );
-          if ( sqr_diff_dist > m_statuses[ i ] )
-          {
-            m_statuses[ i ] = sqr_diff_dist;
-          }
-        }
-      }
+      auto winner_ix = find_winner( input );
+      m_hidden_layer[ winner_ix ].adjust_to( input );
+      m_statuses[ winner_ix ]++;
     }
 
-    void kill_lazy()
+    void kill()
     {
-      auto alive = alive_count();
-      auto remaining = alive;
-
-      auto to_kill =
-        std::max( static_cast< std::size_t >( alive * m_settings.kill_perc ),
-                  m_settings.kill_min );
-
-      auto victims = kill_untouched( alive );
-      remaining -= victims;
-
-      while ( victims < to_kill &&
-              remaining > m_settings.expected_cluster_count )
-      {
-        kill_worst();
-        victims++;
-        remaining--;
-      }
-    }
-
-    std::size_t kill_untouched( std::size_t alive_count )
-    {
-      auto victim_count = std::size_t{ 0 };
+      assert( m_kill_count == 0 );
       for ( auto &&s : m_statuses )
       {
-        if ( s == 0.0 )
+        if ( s == 0 )
         {
-          s = -1.0;
-          victim_count++;
-          if ( alive_count - victim_count <= m_settings.expected_cluster_count )
+          s = -1;
+          m_kill_count++;
+          m_alive_count--;
+          if ( is_completed() )
           {
             break;
           }
         }
       }
-      return victim_count;
     }
 
-    std::size_t alive_count() const
+    void coalesce()
     {
-      auto res = std::size_t{ 0 };
-      for ( auto &&s : m_statuses )
+      if ( is_completed() ||
+           m_iteration_no % m_settings.coalesce_interval != 0 )
       {
-        if ( s >= 0.0 )
-        {
-          res++;
-        }
+        return;
       }
-      return res;
-    }
 
-    void kill_worst()
-    {
-      auto max_ix = std::size_t{ 0 };
-      auto max_val = m_statuses[ 0 ];
-
-      for ( auto i = std::size_t{ 1 }; i < size(); i++ )
-      {
-        if ( m_statuses[ i ] > max_val )
-        {
-          max_val = m_statuses[ i ];
-          max_ix = i;
-        }
-      }
-      m_statuses[ max_ix ] = -1.0;
-    }
-
-
-    /*
-    void kill_worst()
-    {
-      auto min_ix = std::size_t{ 0 };
-      auto min_val = std::numeric_limits< double >::max();
+      auto best_i = std::size_t{ 0 };
+      auto best_j = std::size_t{ 0 };
+      auto best_val = std::numeric_limits< double >::min();
 
       for ( auto i = std::size_t{ 0 }; i < size(); i++ )
       {
-        if ( m_statuses[ i ] >= 0.0 && m_statuses[ i ] < min_val )
+        if ( !is_alive( i ) )
         {
-          min_val = m_statuses[ i ];
-          min_ix = i;
+          continue;
+        }
+
+        for ( auto j = i + 1; j < size(); j++ )
+        {
+          auto dot_prod =
+            m_hidden_layer[ i ].weights() * m_hidden_layer[ j ].weights();
+          if ( is_alive( j ) && dot_prod > best_val )
+          {
+            best_i = i;
+            best_j = j;
+            best_val = dot_prod;
+          }
         }
       }
-      m_statuses[ min_ix ] = -1.0;
+      coalesce( best_i, best_j );
     }
-    */
+
+    void coalesce( std::size_t i, std::size_t j )
+    {
+      m_hidden_layer[ j ].average_with( m_hidden_layer[ i ] );
+      m_statuses[ i ] = -1;
+      m_coalesce_count++;
+      m_alive_count--;
+    }
 
     void print_status() const
     {
-      auto alive = alive_count();
-      auto perc =
-        ( static_cast< double >( alive ) / static_cast< double >( size() ) ) *
-        100.0;
-      std::printf(
-        "ITERATION #%03lu - live neurons remaining: %3lu/%3lu (%6.2f%%)\n",
-        m_iteration_no, alive, size(), perc );
-    }
-
-    void adjust_radius_threshold()
-    {
-      m_radius_threshold *= ( 1.0 - m_settings.beta );
+      auto perc = ( static_cast< double >( m_alive_count ) /
+                    static_cast< double >( size() ) ) *
+                  100.0;
+      std::printf( "ITERATION #%03lu - live neurons remaining: %lu/%lu "
+                   "(%.2f%%) [killed: %lu, coalesced: %lu]\n",
+                   m_iteration_no, m_alive_count, size(), perc, m_kill_count,
+                   m_coalesce_count );
     }
 
     bool is_completed()
     {
-      return alive_count() <= m_settings.expected_cluster_count;
+      assert( m_alive_count >= m_settings.expected_cluster_count );
+      return m_alive_count == m_settings.expected_cluster_count;
       // return m_iteration_no == 100u;
+    }
+
+    bool is_alive( std::size_t index ) const
+    {
+      return m_statuses[ index ] >= 0;
     }
 
     std::size_t size() const noexcept { return m_hidden_layer.size(); }
@@ -292,10 +291,12 @@ namespace isai
   private:
     std::vector< kohonen_neuron_t > m_hidden_layer =
       std::vector< kohonen_neuron_t >{};
-    std::vector< double > m_statuses = std::vector< double >{};
+    std::vector< int > m_statuses = std::vector< int >{};
 
-    double m_radius_threshold;
     std::size_t m_iteration_no;
+    std::size_t m_alive_count;
+    std::size_t m_kill_count;
+    std::size_t m_coalesce_count;
 
     knc_settings_t m_settings;
   };

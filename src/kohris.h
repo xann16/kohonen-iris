@@ -89,29 +89,21 @@ namespace isai
       std::printf( "| #3 - %15s | %4lu | %4lu | %4lu |\n", iris_label_strs[ 2 ],
                    crt[ 2 ][ 0 ], crt[ 2 ][ 1 ], crt[ 2 ][ 2 ] );
       std::printf( "*----------------------*------*------*------*\n" );
-
-      // tbc...
     }
 
     void print_settings()
     {
-      std::printf( " - training set size:                              %3lu\n",
+      std::printf( " - training set size:                   %3lu\n",
                    m_settings.training_set_size );
-      std::printf( " - initial no of neurons:                          %3lu\n",
+      std::printf( " - initial no of neurons:               %3lu\n",
                    m_settings.hidden_layer_size );
 
-      std::printf( " - radius of normalization sphere:                 %6.2f\n",
+      std::printf( " - radius of normalization sphere:      %6.2f\n",
                    m_settings.normalization_sphere_radius );
-      std::printf( " - initial radius of input influence:              %6.2f\n",
-                   m_settings.init_radius_threshold );
-      std::printf( " - alpha (neuron adjustment strength):             %6.2f\n",
+      std::printf( " - alpha (neuron adjustment strength):  %6.2f\n",
                    m_settings.alpha );
-      std::printf( " - beta (radius of input influence reduction):     %6.2f\n",
-                   m_settings.beta );
-      std::printf( " - ratio of neurons killed per iteration:          %6.2f\n",
-                   m_settings.kill_perc );
-      std::printf( " - minimal number of neurons killed per iteration: %3lu\n",
-                   m_settings.kill_min );
+      std::printf( " - adjacent neuront coalesce interval:  %3lu\n",
+                   m_settings.coalesce_interval );
       std::puts( "" );
     }
 

@@ -33,6 +33,13 @@ namespace isai
   // array of features
   using features_t = std::array< double, 5 >;
 
+  // dot product
+  inline double operator*( features_t const &lhs, features_t const &rhs )
+  {
+    return lhs[ 0 ] * rhs[ 0 ] + lhs[ 1 ] * rhs[ 1 ] + lhs[ 2 ] * rhs[ 2 ] +
+           lhs[ 3 ] * rhs[ 3 ] + lhs[ 4 ] * rhs[ 4 ];
+  }
+
   // point of data from iris dataset
   struct data_point_t
   {
